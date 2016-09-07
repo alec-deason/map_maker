@@ -131,7 +131,7 @@ def make_ridges():
 def gradient_water(elevation):
     width, height = elevation.shape
     water = np.zeros(elevation.shape, dtype=np.float64)
-    #water += 50000
+    carrying = np.zeros(elevation.shape, dtype=np.float64)
     rain_rate = 5
     water += 2000
     initial_water = water.sum()
@@ -143,7 +143,6 @@ def gradient_water(elevation):
 
         gradient = np.gradient(np.pad((elevation+water), 20, 'constant', constant_values=[MAX_ELEVATION*100]), 10)
         gradient = (-gradient[0][20:-20,20:-20], -gradient[1][20:-20,20:-20])
-        gradient_direction = np.arctan2(gradient[1],gradient[0])
         points_y, points_x = np.mgrid[0:width, 0:height]
         next_point_x = np.array(points_x)
         next_point_x[gradient[1] >= 0] += 1
@@ -156,10 +155,23 @@ def gradient_water(elevation):
         next_point_y = np.clip(next_point_y, 0, height-1)
 
         new_water = np.array(water)
-        out_flow = np.maximum(np.minimum(water, (elevation + water) - (elevation[next_point_y, next_point_x]+water[next_point_y,next_point_x])), 0)
+        new_carrying = np.zeros(carrying.shape)
+        slope = (elevation + water) - (elevation[next_point_y, next_point_x]+water[next_point_y,next_point_x])
+        out_flow = np.maximum(np.minimum(water, slope), 0)
+        np.add.at(new_carrying, [next_point_y, next_point_x], carrying)
+        carrying = new_carrying
+
         np.add.at(new_water, [next_point_y, next_point_x], out_flow)
         new_water -= out_flow
-        elevation -= out_flow  * (np.logical_and(out_flow > rain_rate*3, water < 500))
+
+        drop = gaussian_filter(new_carrying * (1-out_flow/out_flow.max()), sigma=10)
+        elevation += drop
+        carrying -= drop
+        pickup = gaussian_filter(out_flow * np.minimum(slope, 1000) * 0.01 * (water < 300), sigma=1)
+        elevation -= pickup
+        carrying += pickup
+        elevation = np.clip(elevation, 0, MAX_ELEVATION)
+
         water = new_water
 
 
@@ -172,7 +184,7 @@ def gradient_water(elevation):
             colored = np.array([base, base, base+(MAX_ELEVATION*covered)])
             scipy.misc.toimage(colored).save('data/water_{:03d}.png'.format(iteration))
             #imsave('data/just_water_{:03d}.png'.format(iteration), water)
-            imsave('data/elevation_{:03d}.png'.format(iteration), elevation)
+            scipy.misc.toimage(elevation, cmin=0, cmax=MAX_ELEVATION).save('data/elevation_{:03d}.png'.format(iteration))
 
 if __name__ == '__main__':
     data_path = 'data'
