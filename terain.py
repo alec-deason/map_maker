@@ -1,4 +1,5 @@
 import numpy as np
+import scipy
 from collections import defaultdict
 import pickle
 import json
@@ -80,17 +81,19 @@ class RidgeLine:
         gizeh.circle(2, xy=(xx,yy), fill=(0,0,0)).draw(surface)
 
 
-from scipy.ndimage.filters import maximum_filter, gaussian_filter, median_filter
-from scipy.ndimage import grey_dilation
+from scipy.ndimage.filters import maximum_filter, gaussian_filter, median_filter, minimum_filter
+from scipy.ndimage import grey_dilation, convolve
 from scipy.misc import imsave
 from scipy.ndimage import prewitt
 def make_elevations_numpy(im):
     elevations = np.array(im)[:,:, 3].astype(float) * MAX_ELEVATION
     elevations *= MAX_ELEVATION/elevations.max()
     for i in range(200):
-        elevations += gaussian_filter(grey_dilation(elevations, (3,3)), sigma=4)*0.5
+        elevations += gaussian_filter(grey_dilation(elevations, (3,3)), sigma=3)*0.5
         elevations += np.random.randint(MAX_ELEVATION*0.005, size=(500,500))
         elevations *= MAX_ELEVATION/elevations.max()
+    thresh = np.percentile(elevations, 10)
+    elevations[elevations < thresh] = thresh
     return elevations
 
 
@@ -124,94 +127,52 @@ def make_ridges():
     img = Image.open(data)
     return img
 
-def fast_water(elevations, prefix):
-    steepness, next_point_x, next_point_y = recalculate_slopes(elevations)
-    imsave(prefix + '_steepness.png', steepness)
-    imsave(prefix + '_elevation.png', elevations)
 
-    drops = 10000
-
-    flow = np.zeros((500,500))
-    carrying = np.zeros(drops)
-    deposits = np.zeros((500,500))
-    xs = np.random.randint(500, size=drops)
-    ys = np.random.randint(500, size=drops)
-    next_points_x = next_point_x[xs, ys]
-    next_points_y = next_point_y[xs, ys]
-    f = np.logical_and((next_points_x != xs), (next_points_y != ys))
-    next_points_x = next_points_x[f]
-    next_points_y = next_points_y[f]
-    carrying = carrying[f]
-    i = 0
-    min_steepness = np.min(steepness)
-    max_steepness = np.max(steepness)
-    steepness_scale = max_steepness - min_steepness
-    while len(next_points_x) > 0 and i < 100:
-        i += 1
-        flow[next_points_x, next_points_y] += 1
-        #pickup = np.minimum(0, np.arctan(((steepness[next_points_x, next_points_y] + min_steepness) / steepness_scale) * 8 + 4))
-        pickup = ((steepness[next_points_x, next_points_y] + min_steepness) / steepness_scale) > 0.01
-        import pdb; pdb.set_trace()
-        pickup = pickup.astype(int)
-        carrying = np.minimum(carrying + pickup, 0)
-        to_deposit = -np.minimum(carrying, pickup)
-        
-        deposits[next_points_x, next_points_y] += to_deposit
-
-        new_next_points_x = next_point_x[next_points_x, next_points_y]
-        new_next_points_y = next_point_y[next_points_x, next_points_y]
-        f =np.logical_and((new_next_points_x != next_points_x), (new_next_points_y != next_points_y))
-        next_points_x = new_next_points_x[f]
-        next_points_y = new_next_points_y[f]
-        carrying = carrying[f]
-
-    elevations += gaussian_filter(deposits*10, sigma=1)
-    elevations = np.clip(elevations, 0, MAX_ELEVATION)
-
-    imsave(prefix + '_flow.png', flow!=0)
-
-    return elevations
-
-def run_fast_waters(elevations):
-    for iteration in range(100):
-        print('iteration {}'.format(iteration))
-        elevations = fast_water(elevations, os.path.join('data/{}'.format(iteration)))
-
-def overlay_water(elevations):
-    water = np.zeros(elevations.shape)
-    for iteration in range(100):
+def gradient_water(elevation):
+    width, height = elevation.shape
+    water = np.zeros(elevation.shape, dtype=np.float64)
+    #water += 50000
+    rain_rate = 5
+    water += 2000
+    initial_water = water.sum()
+    for iteration in range(1000):
         if iteration%10 ==0:
             print(iteration)
-        water += 1
-        mean = median_filter(elevations + water, 3)
-        slope = (elevations + water) - mean
-        new_water = water - np.maximum(water, slope)
-        new_water += np.minimum(np.minimum(slope, median_filter(water, footprint=[[True,True,True],[True,False,True],[True,True,True]])), 0)
-        flow = np.abs(water-new_water)
+        water += np.random.randint(0, rain_rate, size=(width, height))
+        water *= initial_water / water.sum()
+
+        gradient = np.gradient(np.pad((elevation+water), 20, 'constant', constant_values=[MAX_ELEVATION*100]), 10)
+        gradient = (-gradient[0][20:-20,20:-20], -gradient[1][20:-20,20:-20])
+        gradient_direction = np.arctan2(gradient[1],gradient[0])
+        points_y, points_x = np.mgrid[0:width, 0:height]
+        next_point_x = np.array(points_x)
+        next_point_x[gradient[1] >= 0] += 1
+        next_point_x[gradient[1] < 0] -= 1
+        next_point_x = np.clip(next_point_x, 0, width-1)
+
+        next_point_y = np.array(points_y)
+        next_point_y[gradient[0] >= 0] += 1
+        next_point_y[gradient[0] < 0] -= 1
+        next_point_y = np.clip(next_point_y, 0, height-1)
+
+        new_water = np.array(water)
+        out_flow = np.maximum(np.minimum(water, (elevation + water) - (elevation[next_point_y, next_point_x]+water[next_point_y,next_point_x])), 0)
+        np.add.at(new_water, [next_point_y, next_point_x], out_flow)
+        new_water -= out_flow
+        elevation -= out_flow  * (np.logical_and(out_flow > rain_rate*3, water < 500))
         water = new_water
-        imsave('data/elevation_{}.png'.format(iteration), elevations)
-        imsave('data/water_{:03d}.png'.format(iteration), water)
-        imsave('data/flow_{:03d}.png'.format(iteration), flow)
 
-def recalculate_slopes(elevations):
-    width, height = elevations.shape
 
-    axis = np.arange(width).repeat(height).reshape(width,height)
-    seed = np.random.randint(1000000)
-    r = np.random.RandomState(seed)
-    neighboors_x = r.permutation(np.array([axis.T+xx for xx in range(-1,2) for yy in range(-1,2)]))
-    r = np.random.RandomState(seed)
-    neighboors_y = r.permutation(np.array([axis+yy for xx in range(-1,2) for yy in range(-1,2)]))
 
-    neighboors = np.pad(elevations, 1, 'constant', constant_values=[np.max(elevations)+1])[np.pad(neighboors_x+1, 1, 'constant', constant_values=[1])[1:-1,:,:], np.pad(neighboors_y+1, 1, 'constant', constant_values=[1])[1:-1,:,:]]
-    neighboors = neighboors[:,1:-1,1:-1]
-
-    least_neighbor = np.argmin(neighboors, axis=0)
-
-    next_point_x = np.choose(least_neighbor, neighboors_x)
-    next_point_y = np.choose(least_neighbor, neighboors_y)
-    steepness = elevations - elevations[next_point_x, next_point_y]
-    return steepness, next_point_x, next_point_y
+        if iteration%1==0:
+            water_thresh = 100
+            covered = water > water_thresh
+            covered = covered[2:-2,2:-2]
+            base=(elevation[2:-2,2:-2])*~covered
+            colored = np.array([base, base, base+(MAX_ELEVATION*covered)])
+            scipy.misc.toimage(colored).save('data/water_{:03d}.png'.format(iteration))
+            #imsave('data/just_water_{:03d}.png'.format(iteration), water)
+            imsave('data/elevation_{:03d}.png'.format(iteration), elevation)
 
 if __name__ == '__main__':
     data_path = 'data'
@@ -236,5 +197,6 @@ if __name__ == '__main__':
 
     print('Running water')
     #terrain = run_fast_waters(elevations)
-    overlay_water(elevations)
+    #overlay_water(elevations)
+    gradient_water(elevations)
 
