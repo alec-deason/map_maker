@@ -93,8 +93,20 @@ def make_elevations_numpy(im):
         elevations += np.random.randint(MAX_ELEVATION*0.005, size=(500,500))
         elevations *= MAX_ELEVATION/elevations.max()
     thresh = np.percentile(elevations, 10)
-    elevations[elevations < thresh] = thresh
+    #elevations[elevations < thresh] = thresh
     return elevations
+
+from noise import snoise2
+def perlin_base_terrain():
+    terrain = np.ndarray((500,500))
+    octaves = 16
+    freq = 32.0 * octaves
+    for y in range(500):
+        for x in range(500):
+            terrain[y,x] = int(snoise2(x / freq, y / freq, octaves) * (MAX_ELEVATION/2) + MAX_ELEVATION/2)
+    imsave('data/elevation.png', terrain)
+    return terrain
+
 
 
 def make_ridges():
@@ -127,85 +139,114 @@ def make_ridges():
     img = Image.open(data)
     return img
 
+def neighboor_slopes(elevation, water, water_line):
+    te = elevation+water
+    te = np.pad(te, 1, 'constant', constant_values=[water_line])
+    width, height = elevation.shape
+    points_y, points_x = np.mgrid[0:width, 0:height]
+    slopes = np.ndarray((9, width, height))
+    next_points_x = np.stack([points_x]*9)
+    next_points_y = np.stack([points_y]*9)
+    i = 0
+    for x in range(-1, 2):
+        for y in range(-1, 2):
+            np_x = points_x + x + 1
+            np_y = points_y + y + 1
+            slopes[i] = np.maximum(te[1:-1,1:-1] - te[np_y, np_x], 0)
+            next_points_x[i] = np_x
+            next_points_y[i] = np_y
+            i += 1
+    sum_slopes = slopes.sum(axis=0)
+    outflow = np.minimum(sum_slopes, water)
+    slopes[:, sum_slopes != 0] /= sum_slopes[sum_slopes != 0]
+    slopes[:, sum_slopes == 0] = 0
+    return slopes, outflow, next_points_x, next_points_y
 
 def gradient_water(elevation):
     width, height = elevation.shape
     water = np.zeros(elevation.shape, dtype=np.float64)
     carrying = np.zeros(elevation.shape, dtype=np.float64)
     rain_rate = 5
-    water += 2000
+    water_line = np.percentile(elevation, 20)
+    water[elevation <= water_line] = water_line - elevation[elevation <= water_line]
     initial_water = water.sum()
     for iteration in range(1000):
         if iteration%10 ==0:
             print(iteration)
-        water += np.random.randint(0, rain_rate, size=(width, height))
-        water *= initial_water / water.sum()
+            print(water.sum(), elevation.sum())
+        #water = np.maximum(0, water-rain_rate/2)
+        #water += np.random.random(size=water.shape)*rain_rate
+        water += rain_rate
+        #water[np.random.randint(0,height, size=1000), np.random.randint(0,width, size=1000)] += 500
 
-        gradient = np.gradient(np.pad((elevation+water), 20, 'constant', constant_values=[MAX_ELEVATION*100]), 10)
-        gradient = (-gradient[0][20:-20,20:-20], -gradient[1][20:-20,20:-20])
-        points_y, points_x = np.mgrid[0:width, 0:height]
-        next_point_x = np.array(points_x)
-        next_point_x[gradient[1] >= 0] += 1
-        next_point_x[gradient[1] < 0] -= 1
-        next_point_x = np.clip(next_point_x, 0, width-1)
+        slopes, outflow, next_points_x, next_points_y = neighboor_slopes(elevation, water, water_line)
+        imsave('data/outflow_{:03d}.png'.format(iteration), outflow)
 
-        next_point_y = np.array(points_y)
-        next_point_y[gradient[0] >= 0] += 1
-        next_point_y[gradient[0] < 0] -= 1
-        next_point_y = np.clip(next_point_y, 0, height-1)
+        new_water = np.pad(water, 1, 'constant', constant_values=[0])
 
-        new_water = np.array(water)
-        new_carrying = np.zeros(carrying.shape)
-        slope = (elevation + water) - (elevation[next_point_y, next_point_x]+water[next_point_y,next_point_x])
-        out_flow = np.maximum(np.minimum(water, slope), 0)
-        np.add.at(new_carrying, [next_point_y, next_point_x], carrying)
-        carrying = new_carrying
+        np.add.at(new_water, [next_points_y, next_points_x], slopes*outflow*0.1)
+        new_water = new_water[1:-1, 1:-1]
+        new_carrying = np.pad(carrying, 1, 'constant', constant_values=[0])
+        flow = np.nan_to_num(outflow/water)
+        imsave('data/flow_{:03d}.png'.format(iteration), flow)
 
-        np.add.at(new_water, [next_point_y, next_point_x], out_flow)
-        new_water -= out_flow
 
-        drop = gaussian_filter(new_carrying * (1-out_flow/out_flow.max()), sigma=10)
-        elevation += drop
+        drop = carrying * (1-flow)
+        #elevation += drop
         carrying -= drop
-        pickup = gaussian_filter(out_flow * np.minimum(slope, 1000) * 0.01 * (water < 300), sigma=1)
+        agro = 1000
+        mslope = slopes.max(axis=0)
+        #pickup = np.maximum(0, np.minimum(elevation, mslope*(outflow/np.power(water+0.001, 1.5))*agro))
+        pickup = agro*(outflow/outflow.max())
         elevation -= pickup
         carrying += pickup
-        elevation = np.clip(elevation, 0, MAX_ELEVATION)
+
+        imsave('data/flow_{:03d}.png'.format(iteration), flow)
+        np.add.at(new_carrying, [next_points_y, next_points_x], slopes*carrying*flow)
+        new_carrying = new_carrying[1:-1,1:-1]
+        new_carrying -= carrying*flow
+        carrying = new_carrying
+
+        new_water -= outflow*0.1
+
+        #elevation = np.clip(elevation, 0, MAX_ELEVATION)
 
         water = new_water
 
 
 
         if iteration%1==0:
-            water_thresh = 100
-            covered = water > water_thresh
-            covered = covered[2:-2,2:-2]
-            base=(elevation[2:-2,2:-2])*~covered
-            colored = np.array([base, base, base+(MAX_ELEVATION*covered)])
-            scipy.misc.toimage(colored).save('data/water_{:03d}.png'.format(iteration))
+            #water_thresh = 100
+            #covered = water > water_thresh
+            #covered = covered[2:-2,2:-2]
+            #base=(elevation[2:-2,2:-2])*~covered
+            base = elevation[2:-2,2:-2]
+            colored = np.array([base, base, (water[2:-2,2:-2]> 0)*MAX_ELEVATION])#base+water[2:-2,2:-2]])
+            scipy.misc.toimage(colored, cmin=0, cmax=MAX_ELEVATION).save('data/water_{:03d}.png'.format(iteration))
             #imsave('data/just_water_{:03d}.png'.format(iteration), water)
             scipy.misc.toimage(elevation, cmin=0, cmax=MAX_ELEVATION).save('data/elevation_{:03d}.png'.format(iteration))
 
 if __name__ == '__main__':
     data_path = 'data'
-    if not os.path.exists(os.path.join(data_path, 'ridges.png')):
-        print('Making ridges')
-        img = make_ridges()
-        img.save(os.path.join(data_path, 'ridges.png'))
-    else:
-        print('Loading ridges')
-        img = Image.open(os.path.join(data_path, 'ridges.png'))
-
-    if not os.path.exists(os.path.join(data_path, 'initial_elevations.pickle')):
-        print('Making initial elevation')
-        elevations = make_elevations_numpy(img)
-        imsave(os.path.join(data_path, 'initial_elevations.png'), elevations)
-        with open(os.path.join(data_path, 'initial_elevations.pickle'), 'wb') as f:
-            pickle.dump(elevations, f)
-    else:
-        print('Loading initial elevation')
-        with open(os.path.join(data_path, 'initial_elevations.pickle'), 'rb') as f:
-            elevations = pickle.load(f)
+#    if not os.path.exists(os.path.join(data_path, 'ridges.png')):
+#        print('Making ridges')
+#        img = make_ridges()
+#        img.save(os.path.join(data_path, 'ridges.png'))
+#    else:
+#        print('Loading ridges')
+#        img = Image.open(os.path.join(data_path, 'ridges.png'))
+#
+#    if not os.path.exists(os.path.join(data_path, 'initial_elevations.pickle')):
+#        print('Making initial elevation')
+#        elevations = make_elevations_numpy(img)
+#        imsave(os.path.join(data_path, 'initial_elevations.png'), elevations)
+#        with open(os.path.join(data_path, 'initial_elevations.pickle'), 'wb') as f:
+#            pickle.dump(elevations, f)
+#    else:
+#        print('Loading initial elevation')
+#        with open(os.path.join(data_path, 'initial_elevations.pickle'), 'rb') as f:
+#            elevations = pickle.load(f)
+    elevations = perlin_base_terrain()
 
     print('Running water')
     #terrain = run_fast_waters(elevations)
