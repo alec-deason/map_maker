@@ -78,7 +78,7 @@ def gradient_water(elevation, material):
     rain =0
     durations = []
     initial_material=elevation.sum()
-    for iteration in range(5000):
+    for iteration in range(130):
         start = time()
         if iteration%10 ==0:
             print(iteration, np.mean(durations))
@@ -114,18 +114,9 @@ def gradient_water(elevation, material):
 
         water = new_water
 
-
-
-        if iteration%1==0:
-            imsave('data/flow_{:03d}.png'.format(iteration), flow)
-            imsave('data/outflow_{:03d}.png'.format(iteration), outflow)
-            covered = np.logical_or(water > np.percentile(water, 90), outflow > np.percentile(outflow, 99))
-            covered = covered[2:-2,2:-2]
-            base=(elevation+sediment)[2:-2,2:-2]*~covered
-            colored = np.array([base, base, MAX_ELEVATION*covered])#base+water[2:-2,2:-2]])
-            scipy.misc.toimage(colored, cmin=0, cmax=MAX_ELEVATION).save('data/water_{:03d}.png'.format(iteration))
-            scipy.misc.toimage(elevation+sediment, cmin=0, cmax=MAX_ELEVATION).save('data/elevation_{:03d}.png'.format(iteration))
         durations.append(time()-start)
+    np.save('elevation.npy', elevation)
+    np.save('water.npy', water)
 
 if __name__ == '__main__':
     data_path = 'data'
