@@ -8,29 +8,31 @@ from scipy.misc import imsave
 
 from noise import snoise2, snoise3
 
-MAX_ELEVATION = 100000
-WIDTH = HEIGHT = 300
-DEPTH = 30
 MATERIALS = np.array([10000]+[x*20 for x in range(200, 1,-5)])
 
 
-def perlin_base_terrain():
-    terrain = np.ndarray((WIDTH, HEIGHT))
-    material = np.zeros((WIDTH, HEIGHT, DEPTH))
+def perlin_base_terrain(ctx, config):
+    width = config['width']
+    height = config['height']
+    depth = config['material_layers']
+    seed = config['seed']
+    max_elevation = config['max_elevation']
+    terrain = np.ndarray((width, height))
+    material = np.zeros((width, height, depth))
     material += 1000
-    octaves = 16
-    freq = 32.0 * octaves
+    octaves = config['octaves']
+    freq = config['frequency'] * octaves
 
-    mat_octaves = 8
-    mat_freq = 64.0 * mat_octaves
-    for y in range(HEIGHT):
-        for x in range(WIDTH):
-            terrain[y,x] = snoise2(x / freq, y / freq, octaves)
-            for z in range(DEPTH):
-                material[y, x, z] = snoise3(x / mat_freq, y / mat_freq, z / mat_freq, mat_octaves)
+    mat_octaves = octaves / config['material_coarseness']
+    mat_freq = config['frequency'] * mat_octaves
+    for y in range(height):
+        for x in range(width):
+            terrain[y,x] = snoise2((x+seed*width) / freq, (y+seed*height) / freq, octaves)
+            for z in range(depth):
+                material[y, x, z] = snoise3((x+seed*width) / mat_freq, (y+seed*height) / mat_freq, (z+seed*depth) / mat_freq, int(mat_octaves))
     terrain /= 2
-    terrain *= MAX_ELEVATION
-    terrain += MAX_ELEVATION/2
+    terrain *= max_elevation
+    terrain += max_elevation/2
 
     material /= 2
     material += 0.5
@@ -38,8 +40,9 @@ def perlin_base_terrain():
     material += 1
     material = MATERIALS[material.astype(int)]
 
-    imsave('data/elevation.png', terrain)
-    return terrain, material
+    ctx['elevation'] = terrain
+    ctx['material'] = material
+    return ctx
 
 def neighboor_slopes(elevation, water, water_line):
     te = elevation+water
@@ -64,30 +67,31 @@ def neighboor_slopes(elevation, water, water_line):
     slopes[:, sum_slopes == 0] = 0
     return slopes, outflow, next_points_x, next_points_y
 
-def gradient_water(elevation, material):
+def gradient_water(ctx, config):
+    elevation = ctx['elevation']
+    material = ctx['material']
     width, height = elevation.shape
     water = np.zeros(elevation.shape, dtype=np.float64)
     carrying = np.zeros(elevation.shape, dtype=np.float64)
-    sediment = np.zeros(elevation.shape, dtype=np.float64)
-    rain_rate = 150
     points_y, points_x = np.mgrid[0:width, 0:height]
-    water_line = np.percentile(elevation, 20)
+    water_line = np.percentile(elevation, config['water_line_percentile'])
     water[elevation <= water_line] = water_line - elevation[elevation <= water_line]
-    water_thresh = rain_rate*2
+    water_thresh = config['rain_rate']*2
     initial_water = water.sum()
+    max_elevation = elevation.max()
     rain =0
     durations = []
     initial_material=elevation.sum()
-    for iteration in range(130):
+    for iteration in range(config['iterations']):
         start = time()
         if iteration%10 ==0:
             print(iteration, np.mean(durations))
             print(carrying.sum()/initial_material, carrying.sum()/water.sum())
         rain = (initial_water - water.sum()) / (width*height)
-        water = np.maximum(0, water-rain_rate/2)
+        water = np.maximum(0, water-config['rain_rate']/2)
         water += np.random.random(size=water.shape)*rain
 
-        slopes, outflow, next_points_x, next_points_y = neighboor_slopes(elevation+sediment, water, MAX_ELEVATION+1000)
+        slopes, outflow, next_points_x, next_points_y = neighboor_slopes(elevation, water, max_elevation+1000)
 
         new_water = np.pad(water, 1, 'constant', constant_values=[0])
 
@@ -96,15 +100,14 @@ def gradient_water(elevation, material):
         flow = np.nan_to_num(outflow/water)
 
 
-        #drop = np.minimum((carrying * (1-flow)), water*.5)
         drop = carrying * (1-flow) * 0.5
         elevation += drop
 
         carrying -= drop
         new_water = np.maximum(0, new_water-drop)
-        agro = material[points_y, points_x, (elevation[points_y, points_x]/MAX_ELEVATION).astype(int) * DEPTH]
+        agro = material[points_y, points_x, (elevation[points_y, points_x]/max_elevation).astype(int) * (material.shape[2]-1)]
 
-        pickup = np.minimum(elevation, agro*(outflow/(rain_rate*100))*flow)
+        pickup = np.minimum(elevation, agro*(outflow/(config['rain_rate']*100))*flow)
         elevation -= pickup
         carrying += pickup
 
@@ -115,13 +118,6 @@ def gradient_water(elevation, material):
         water = new_water
 
         durations.append(time()-start)
-    np.save('elevation.npy', elevation)
-    np.save('water.npy', water)
-
-if __name__ == '__main__':
-    data_path = 'data'
-    elevation, material = perlin_base_terrain()
-
-    print('Running water')
-    gradient_water(elevation, material)
-
+    ctx['elevation'] = elevation
+    ctx['water'] = water
+    return ctx
