@@ -1,13 +1,16 @@
 import time
+import math
 from collections import defaultdict
-from scipy.spatial import Voronoi
+from scipy.spatial import Voronoi, Delaunay
 from noise import snoise2
 import numpy as np
 
 start = time.time()
 WIDTH = HEIGHT = 1000
-points = np.random.randint(int(-WIDTH/10), int(WIDTH+WIDTH/10), size=(4000,2))
+POLYGONS = 20000
+points = np.random.randint(int(-WIDTH/10), int(WIDTH+WIDTH/10), size=(POLYGONS,2))
 
+# Relax the mesh
 for i in range(2):
     vor = Voronoi(points)
     new_points = []
@@ -16,56 +19,69 @@ for i in range(2):
         verts = vor.vertices[idx]
         if len(verts) > 0:
             new_points.append(verts.mean(axis=0))
-    points = new_points
+        points = new_points
 
-vor = Voronoi(points)
-
-ridges = {i:set() for i in range(len(points))}
-    
+mesh = Delaunay(Voronoi(points).vertices)
 
 seed = np.random.randint(1000)
 
 scale = 0.0007
-elevation = (np.array([snoise2((x+seed)*scale, (y+seed)*scale, 4) for x,y in vor.vertices]) + 1)/2
-water_line = np.percentile(elevation, 30)
-river_score = np.zeros(len(vor.vertices))
-basins = {}
+centers = mesh.points[mesh.simplices].mean(axis=1)
+elevation = (np.array([snoise2((x+seed)*scale, (y+seed)*scale, 4) for x,y in centers]) + 1)/2
 
-def calc_slope():
-    downhill = {i:(0,i) for i in range(len(vor.vertices))}
-    for a,b in vor.ridge_vertices:
-        if a != -1 and b != -1:
-            low, high = sorted([a,b], key= lambda x: elevation[x])
-            low_water = basins.get(verts_to_p[low], 0)
-            high_water = basins.get(verts_to_p[high], 0)
-            s = (elevation[high]+high_water)-(elevation[low]+low_water)
-            if downhill[high][0] <= s:
-                downhill[high] = (s, low)
-    return downhill
-verts_to_p = {v:pi for pi,p in enumerate(points)
-                   for v in vor.regions[vor.point_region[pi]]
-                   if v != -1}
+# Do a  Planchon-Darboux fill
+def planchon_darboux_fill(elevation, mesh):
+    corrected_elevation = np.zeros(elevation.shape) + np.inf
+    edges = mesh.neighbors.min(axis=1) == -1
+    lowest = np.argmin(elevation)
+    corrected_elevation[edges] = elevation[edges]
+    did_change = True
+    while did_change:
+        did_change = False
+        neighbors = mesh.neighbors[~edges]
+        lowest = corrected_elevation[neighbors].min(axis=1)
+        to_change = lowest < corrected_elevation[~edges]
+        new_value = np.maximum(elevation[~edges][to_change], lowest[to_change]+0.0001)
+        if np.sum(new_value != corrected_elevation[~edges][ to_change]) > 0:
+            ne = corrected_elevation[~edges]
+            ne[to_change] = new_value
+            corrected_elevation[~edges]=ne
+            did_change = True
+    return corrected_elevation
 
-peak_threshold = np.percentile(elevation, 70)
-peak_verts = np.argwhere(elevation > peak_threshold).T[0]
-for i in range(100):
-    downhill = calc_slope()
-    basin_verts = list({v for p in basins for v in vor.regions[p] if v != -1})*2
-    choices = np.concatenate([peak_verts, list(basin_verts)])
-    p = np.random.choice(choices)
-    done = set()
-    while True:
-        done.add(p)
-        river_score[p] += 1
-        n = downhill[p][1]
-        bp = verts_to_p[p]
-        if n in done or bp in basins:
-            basins[bp] = basins.get(bp, 0) + 0.5
-            break
-        p = n
 
-river_score[np.argwhere(elevation < water_line).T[0]] = 0
-river_score = np.sqrt(((river_score - river_score.min())/river_score.max())*20)
+def flux_and_slope(elevation, mesh):
+    flux = np.zeros(elevation.shape)
+    slope = np.zeros(elevation.shape)
+    velocity = np.zeros(elevation.shape)
+    for i, e in sorted(enumerate(elevation), key=lambda x:x[1], reverse=True):
+        neighbors = [x for x in mesh.neighbors[i] if x >= 0]
+        lowest = np.argmin(elevation[neighbors])
+        flux[neighbors[lowest]] += flux[i]+1
+        slope[i] = e - elevation[lowest]
+        velocity[neighbors[lowest]] = (e - elevation[lowest]) + velocity[i]*0.9
+    return flux/flux.max(), slope, velocity/velocity.max()
+
+
+for _ in range(2):
+    elevation = planchon_darboux_fill(elevation, mesh)
+    flux, slope, velocity = flux_and_slope(elevation, mesh)
+    elevation -= np.minimum(velocity*np.sqrt(flux), 0.1)
+
+water_line = np.median(elevation)
+flux = (flux+flux[elevation > water_line].min())/flux[elevation > water_line].max()
+velocity = (velocity+velocity[elevation > water_line].min())/velocity[elevation > water_line].max()
+
+# Smoothing
+for _ in range(3):
+    for i,e in enumerate(elevation):
+        ne = elevation[[x for x in mesh.neighbors[i] if x != -1]]
+        nwl = (ne > water_line).mean()
+        if e > water_line and nwl < 0.5:
+            elevation[i] = (e + ne.sum())/(len(ne)+1)
+        elif e < water_line and nwl > 0.5:
+            elevation[i] = (e + ne.sum())/(len(ne)+1)
+elevation = planchon_darboux_fill(elevation, mesh)
 
 print("Done generating in {}".format(time.time()-start))
 
@@ -75,49 +91,65 @@ import cairocffi as cairo
 surface = cairo.ImageSurface (cairo.FORMAT_RGB24, WIDTH, HEIGHT)
 ctx = cairo.Context(surface)
 
-vertices = vor.vertices
+ctx.set_line_width(1)
+for i,(a,b,c) in enumerate(mesh.simplices):
+    e = elevation[i]
+    if e < water_line:
+        color = (0, 0, 1)
+    else:
+        f = flux[i]
+        v = velocity[i]*np.sqrt(f)
+        color = (e,e,e)
+    ctx.set_source_rgb(*color)
+    ctx.move_to(mesh.points[a][0], mesh.points[a][1])
+    ctx.line_to(mesh.points[b][0], mesh.points[b][1])
+    ctx.line_to(mesh.points[c][0], mesh.points[c][1])
+    ctx.close_path()
+    ctx.stroke_preserve()
+    ctx.fill()
 
 
+ctx.set_source_rgb(0,0,0)
+ctx.set_line_width(3)
+for i,(a,b,c) in enumerate(mesh.simplices):
+    e = elevation[i]
+    if e >= water_line:
+        nes = list(zip([(b,c),(c,a),(a,b)], elevation[mesh.neighbors[i]]))
+        for (a,b), ve in nes:
+            if ve < water_line:
+                ctx.move_to(mesh.points[a][0], mesh.points[a][1])
+                ctx.line_to(mesh.points[b][0], mesh.points[b][1])
+                ctx.stroke()
 
-for i, p in enumerate(points):
-    vert_idx = vor.regions[vor.point_region[i]]
-    if -1 not in vert_idx:
-        verts = vertices[vert_idx]
-        e = elevation[vert_idx].mean()
-        if e < water_line:
-            color = (0,0,0.6)
-        elif i in basins:
-            color = (0, 0, 1)
-        elif e > peak_threshold:
-            color = (e, e, e)
-        else:
-            color = (0,e,0)
-        ctx.move_to (*verts[0])
-        cx = verts[0][0]
-        cy = verts[0][1]
-        for x,y in verts[1:]:
-            steps = 10
-            dx = (x-cx)/steps
-            dy = (y-cy)/steps
-            for j in range(steps):
-                ctx.line_to(cx+dx*steps+np.random.random(),cy+dy*steps+np.random.random())
-            cx = x
-            cy = y
-        ctx.close_path()
-        ctx.set_source_rgb(*color)
-        ctx.set_line_width(1)
-        ctx.stroke_preserve()
-        ctx.fill()
+downhill = np.zeros(elevation.shape, dtype=int)
+for i, e in sorted(enumerate(elevation), key=lambda x:x[1], reverse=True):
+    neighbors = [x for x in mesh.neighbors[i] if x >= 0]
+    lowest = np.argmin(elevation[neighbors])
+    downhill[i] = neighbors[lowest]
 
+river_points = sorted(enumerate(flux), key=lambda x: x[1])
+land_bits = set(np.array(range(len(elevation)))[elevation > water_line])
+river_points = [i for i,_ in river_points if i in land_bits][-int(POLYGONS/10):]
+ctx.set_line_width(2)
+for i in river_points:
+    verts = mesh.simplices[i]
+    x,y = mesh.points[verts].mean(axis=0)
+    line = [(x,y)]
+    i = downhill[i]
+    e = elevation[i]
+    while e > water_line:
+        verts = mesh.simplices[i]
+        x,y = mesh.points[verts].mean(axis=0)
+        line.append((x,y))
+        i = downhill[i]
+        e = elevation[i]
 
-for a,b in vor.ridge_vertices:
-    if a != -1 and b != -1:
-        river_width = river_score[[a,b]].min()
-        (ax,ay), (bx,by) = vertices[[a,b]]
-        ctx.move_to(ax, ay)
-        ctx.line_to(bx, by)
-        ctx.set_line_width(river_width)
-        ctx.set_source_rgb(0, 0, 1)
-        ctx.stroke()
+    previous = line[0]
+    for i,current in enumerate(line[1:-1], 1):
+        line[i] = np.mean(line[i-1:i+2], axis=0)
+    ctx.move_to(*line[0])
+    for x,y in line[1:]:
+        ctx.line_to(x,y)
+    ctx.stroke()
 surface.write_to_png('test.png')
 print("Done drawing in {}".format(time.time()-start))
