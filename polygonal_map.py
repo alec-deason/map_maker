@@ -2,12 +2,13 @@ import time
 import math
 from collections import defaultdict
 from scipy.spatial import Voronoi, Delaunay
+from scipy.stats import describe
 from noise import snoise2
 import numpy as np
 
 start = time.time()
-WIDTH = HEIGHT = 1000
-POLYGONS = 20000
+WIDTH = HEIGHT = 500
+POLYGONS = 5000
 points = np.random.randint(int(-WIDTH/10), int(WIDTH+WIDTH/10), size=(POLYGONS,2))
 
 # Relax the mesh
@@ -82,6 +83,37 @@ for _ in range(3):
         elif e < water_line and nwl > 0.5:
             elevation[i] = (e + ne.sum())/(len(ne)+1)
 elevation = planchon_darboux_fill(elevation, mesh)
+water_line = np.median(elevation)
+
+city_populations = sorted([10000  for a in np.random.randint(1, 15, size=int(np.random.normal(5, 2)))], reverse=True)
+print('{} cities'.format(len(city_populations)))
+city_locations = []
+
+base_score = np.zeros(elevation.shape, dtype=float)
+o=WIDTH/len(city_populations)
+f=np.logical_or(np.logical_or(centers[:,0] < o, np.logical_or(np.logical_or(elevation < water_line, centers[:,0] >= WIDTH-o), centers[:,1] >= HEIGHT-o)), centers[:,1] < o)
+base_score[f] = - np.inf
+#base_score -= np.power(centers[:,0], 2)
+#base_score -= np.power((WIDTH-centers[:,0]), 2)
+#base_score -= np.power(centers[:,1], 2)
+#base_score -= np.power((HEIGHT-centers[:,1]), 2)
+#base_score[~f] -= base_score[~f].min()
+#base_score[~f] /= base_score[~f].max()
+base_score += flux*4
+def city_score(city_locations):
+    score = base_score.copy()
+    for ci, pop in zip(city_locations, city_populations):
+        x,y = centers[ci]
+        dists = np.sqrt(np.power(centers[:,0]-x, 2)+np.power(centers[:,1]-y, 2))
+        score[dists < WIDTH/len(city_populations)] = -np.inf
+    return score
+
+for pop in city_populations:
+    score = city_score(city_locations)
+    print(score[~f].min(), np.median(score[~f]), score[~f].max())
+    city_locations.append(np.argmax(score))
+    print('Placed city {}'.format(len(city_locations)))
+
 
 print("Done generating in {}".format(time.time()-start))
 
@@ -90,7 +122,9 @@ import cairocffi as cairo
 
 surface = cairo.ImageSurface (cairo.FORMAT_RGB24, WIDTH, HEIGHT)
 ctx = cairo.Context(surface)
-
+score=city_score(city_locations)
+score[~f] -= score[~f].min()
+score[~f] /= score[~f].max()
 ctx.set_line_width(1)
 for i,(a,b,c) in enumerate(mesh.simplices):
     e = elevation[i]
@@ -99,6 +133,7 @@ for i,(a,b,c) in enumerate(mesh.simplices):
     else:
         f = flux[i]
         v = velocity[i]*np.sqrt(f)
+        s = score[i]
         color = (e,e,e)
     ctx.set_source_rgb(*color)
     ctx.move_to(mesh.points[a][0], mesh.points[a][1])
@@ -130,26 +165,36 @@ for i, e in sorted(enumerate(elevation), key=lambda x:x[1], reverse=True):
 river_points = sorted(enumerate(flux), key=lambda x: x[1])
 land_bits = set(np.array(range(len(elevation)))[elevation > water_line])
 river_points = [i for i,_ in river_points if i in land_bits][-int(POLYGONS/10):]
-ctx.set_line_width(2)
 for i in river_points:
-    verts = mesh.simplices[i]
-    x,y = mesh.points[verts].mean(axis=0)
+    x,y = centers[i]
     line = [(x,y)]
+    done = {i}
     i = downhill[i]
     e = elevation[i]
-    while e > water_line:
-        verts = mesh.simplices[i]
-        x,y = mesh.points[verts].mean(axis=0)
+    while e > water_line and i not in done:
+        done.add(i)
+        x,y = centers[i]
         line.append((x,y))
         i = downhill[i]
         e = elevation[i]
 
     previous = line[0]
-    for i,current in enumerate(line[1:-1], 1):
-        line[i] = np.mean(line[i-1:i+2], axis=0)
+    fluxes = []
+    #for i,current in enumerate(line[1:-1], 1):
+    #    line[i] = np.mean(line[i-1:i+2], axis=0)
+    #    fluxes.append(flux[i])
+    ctx.set_line_width(1)
     ctx.move_to(*line[0])
     for x,y in line[1:]:
         ctx.line_to(x,y)
     ctx.stroke()
+
+city_populations = np.array(city_populations)/np.max(city_populations)
+ctx.set_source_rgb(0.5,0,0)
+for l,pop in zip(city_locations, city_populations):
+    x,y = centers[l]
+    print(x,y, pop)
+    ctx.arc(x,y,pop*5, 0, math.pi*2)
+    ctx.fill()
 surface.write_to_png('test.png')
 print("Done drawing in {}".format(time.time()-start))
