@@ -8,19 +8,18 @@ def planchon_darboux_fill(mesh):
     it makes lakes impossible and tends to form atrificial looking plains.
     """
     corrected_elevation = np.zeros(mesh.elevation.shape) + np.inf
-    edge_nodes = mesh.neighbors.min(axis=1) == -1
-    corrected_elevation[edge_nodes] = mesh.elevation[edge_nodes]
+    corrected_elevation[mesh.edge_regions] = mesh.elevation[mesh.edge_regions]
     did_change = True
     while did_change:
         did_change = False
-        neighbors = mesh.neighbors[~edge_nodes]
+        neighbors = mesh.neighbors[~mesh.edge_regions]
         lowest = corrected_elevation[neighbors].min(axis=1)
-        to_change = lowest < corrected_elevation[~edge_nodes]
-        new_value = np.maximum(mesh.elevation[~edge_nodes][to_change], lowest[to_change]+0.0001)
-        if np.sum(new_value != corrected_elevation[~edge_nodes][to_change]) > 0:
-            ne = corrected_elevation[~edge_nodes]
+        to_change = lowest < corrected_elevation[~mesh.edge_regions]
+        new_value = np.maximum(mesh.elevation[~mesh.edge_regions][to_change], lowest[to_change]+0.0001)
+        if np.sum(new_value != corrected_elevation[~mesh.edge_regions][to_change]) > 0:
+            ne = corrected_elevation[~mesh.edge_regions]
             ne[to_change] = new_value
-            corrected_elevation[~edge_nodes] = ne
+            corrected_elevation[~mesh.edge_regions] = ne
             did_change = True
     return corrected_elevation
 
@@ -29,16 +28,17 @@ def calculate_flow(mesh):
     (the difference in elevation between the node and it's lowest neighbor) and
     velocity (the speed at which it is flowing).
     """
-    flux = np.zeros(mesh.elevation.shape)
-    slope = np.zeros(mesh.elevation.shape)
-    velocity = np.zeros(mesh.elevation.shape)
+    flux = np.zeros(len(mesh.elevation)+1)
+    slope = np.zeros(len(mesh.elevation)+1)
+    velocity = np.zeros(len(mesh.elevation)+1)
+    elevation = np.append(mesh.elevation, [np.inf])
+    all_lowest = mesh.neighbors[np.arange(len(mesh.neighbors)), np.argmin(elevation[mesh.neighbors], axis=1)]
+    slope = mesh.elevation - mesh.elevation[all_lowest]
     for i, e in sorted(enumerate(mesh.elevation), key=lambda x:x[1], reverse=True):
-        neighbors = [x for x in mesh.neighbors[i] if x >= 0]
-        lowest = np.argmin(mesh.elevation[neighbors])
-        flux[neighbors[lowest]] += flux[i]+1
-        slope[i] = e - mesh.elevation[lowest]
-        velocity[neighbors[lowest]] = (e - mesh.elevation[lowest]) + velocity[i]*0.9
-    return flux/flux.max(), slope, velocity/velocity.max()
+        lowest = all_lowest[i]
+        flux[lowest] += flux[i]+1
+        velocity[mesh.neighbors[lowest]] = (e - mesh.elevation[lowest]) + velocity[i]*0.9
+    return (flux/flux.max())[:-1], slope[:-1], (velocity/velocity.max())[:-1]
 
 def smooth_coast_lines(mesh):
     """Reduce erosion artifacts by lowering small, sharp islands and filling in
@@ -57,13 +57,14 @@ def smooth_coast_lines(mesh):
     return elevation
 
 def hydrolic_erosion(mesh):
-    for _ in range(2):
+    for _ in range(15):
         mesh.elevation = planchon_darboux_fill(mesh)
         flux, sloke, velocity = calculate_flow(mesh)
-        mesh.elevation -= np.minimum(velocity*np.sqrt(flux), 0.01)
-    mesh.elevation = smooth_coast_lines(mesh)
+        mesh.elevation -= np.minimum(velocity*np.sqrt(flux), 0.05)
+    #mesh.elevation = smooth_coast_lines(mesh)
     flux, sloke, velocity = calculate_flow(mesh)
     mesh.water_flux = flux
+    mesh.elevation = (mesh.elevation - mesh.elevation.min()) / mesh.elevation.max()
     mesh.water_line = np.median(mesh.elevation)
     return mesh
 
