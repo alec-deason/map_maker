@@ -16,6 +16,10 @@ class Mesh:
         self.water_flux = None
         self.population = None
         self.point_to_region = None
+        self.temperature = None
+        self.humidity = None
+        self.biome_ids = {}
+        self.biomes = None
 
 def delauny_mesh(width, height, point_count):
     points = np.random.randint(int(-width/10), int(width+height/10), size=(point_count,2))
