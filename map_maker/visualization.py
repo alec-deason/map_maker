@@ -3,18 +3,20 @@ import numpy as np
 
 import cairocffi as cairo
 
-def draw(path, mesh):
-    surface = cairo.ImageSurface (cairo.FORMAT_RGB24, mesh.width, mesh.height)
+def draw(path, mesh, width, height):
+    surface = cairo.ImageSurface (cairo.FORMAT_RGB24, width, height)
     ctx = cairo.Context(surface)
+    ctx.scale(width/mesh.width, height/mesh.height)
     ctx.set_line_width(1)
-    scaled_population = mesh.population/ mesh.population.max()
+    water_color = np.power(1-mesh.water/mesh.water.max(), 2)
     for i,(verts) in enumerate(mesh.regions):
         e = mesh.elevation[i]
-        p = scaled_population[i]
-        if e < mesh.water_line:
-            color = (0, 0, 1)
+        e += mesh.water[i]
+        color = (e,e,e)
+        if mesh.water[i] > 0:
+            color = (0, 0, water_color[i])
         else:
-            color = (e+p,e,e)
+            color = (e*.9,e*.8,e*.7)
         ctx.move_to(*mesh.points[verts[0]])
         for v in verts[1:]:
             ctx.line_to(mesh.points[v][0], mesh.points[v][1])
@@ -25,13 +27,13 @@ def draw(path, mesh):
 
 
     ctx.set_source_rgb(0,0,0)
-    ctx.set_line_width(3)
+    ctx.set_line_width(1)
     for i,(a,b,c) in enumerate(mesh.regions):
-        e = mesh.elevation[i]
-        if e >= mesh.water_line:
-            nes = list(zip([(b,c),(c,a),(a,b)], mesh.elevation[mesh.neighbors[i]]))
+        w = mesh.water[i]
+        if w == 0:
+            nes = list(zip([(b,c),(c,a),(a,b)], mesh.water[mesh.neighbors[i]]))
             for (a,b), ve in nes:
-                if ve < mesh.water_line:
+                if ve > 0:
                     ctx.move_to(mesh.points[a][0], mesh.points[a][1])
                     ctx.line_to(mesh.points[b][0], mesh.points[b][1])
                     ctx.stroke()
@@ -47,7 +49,6 @@ def draw(path, mesh):
                     ctx.move_to(mesh.points[a][0], mesh.points[a][1])
                     ctx.line_to(mesh.points[b][0], mesh.points[b][1])
                     ctx.stroke()
-
     downhill = np.zeros(mesh.elevation.shape, dtype=int)
     for i, e in sorted(enumerate(mesh.elevation), key=lambda x:x[1], reverse=True):
         neighbors = [x for x in mesh.neighbors[i] if x >= 0]
@@ -57,20 +58,20 @@ def draw(path, mesh):
     ctx.set_source_rgb(0,0,0)
     ctx.set_line_width(1)
     river_points = sorted(enumerate(mesh.water_flux), key=lambda x: x[1])
-    land_bits = set(np.array(range(len(mesh.elevation)))[mesh.elevation > mesh.water_line])
+    land_bits = set(np.array(range(len(mesh.elevation)))[mesh.water == 0])
     river_points = [i for i,_ in river_points if i in land_bits][-int(len(mesh.elevation)/10):]
     for i in river_points:
         x,y = mesh.centers[i]
         line = [(x,y)]
         done = {i}
         i = downhill[i]
-        e = mesh.elevation[i]
-        while e > mesh.water_line and i not in done:
+        w = mesh.water[i]
+        while w == 0 and i not in done:
             done.add(i)
             x,y = mesh.centers[i]
             line.append((x,y))
             i = downhill[i]
-            e = mesh.elevation[i]
+            w = mesh.water[i]
 
         previous = line[0]
         fluxes = []

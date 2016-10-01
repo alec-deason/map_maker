@@ -1,3 +1,4 @@
+from heapq import heappush, heappop
 import numpy as np
 
 def planchon_darboux_fill(mesh):
@@ -8,7 +9,7 @@ def planchon_darboux_fill(mesh):
     it makes lakes impossible and tends to form atrificial looking plains.
     """
     corrected_elevation = np.zeros(mesh.elevation.shape) + np.inf
-    corrected_elevation[mesh.edge_regions] = mesh.elevation[mesh.edge_regions]
+    corrected_elevation[mesh.edge_regions] = np.median(mesh.elevation)#mesh.elevation[mesh.edge_regions]
     did_change = True
     while did_change:
         did_change = False
@@ -32,13 +33,26 @@ def calculate_flow(mesh):
     slope = np.zeros(len(mesh.elevation)+1)
     velocity = np.zeros(len(mesh.elevation)+1)
     elevation = np.append(mesh.elevation, [np.inf])
+    #water = np.zeros(len(mesh.elevation)+1)
     all_lowest = mesh.neighbors[np.arange(len(mesh.neighbors)), np.argmin(elevation[mesh.neighbors], axis=1)]
+    #filling = True
+    #water_covered_count = 0
+    #while filling:
+    #    diff = np.append(elevation[all_lowest] - elevation[:-1], [-1])
+    #    basins = diff >= 0
+    #    water[basins] += diff[basins] + 0.0001
+    #    elevation[basins] += diff[basins] + 0.0001
+    #    filling = np.percentile(elevation, 30) < np.median(mesh.elevation)
+    #    print(water.max())
+    #    all_lowest = mesh.neighbors[np.arange(len(mesh.neighbors)), np.argmin(elevation[mesh.neighbors], axis=1)]
+
     slope = mesh.elevation - mesh.elevation[all_lowest]
-    for i, e in sorted(enumerate(mesh.elevation), key=lambda x:x[1], reverse=True):
+    for i in np.argsort(elevation[:-1])[::-1]:
+        e = elevation[i]
         lowest = all_lowest[i]
         flux[lowest] += flux[i]+1
         velocity[mesh.neighbors[lowest]] = (e - mesh.elevation[lowest]) + velocity[i]*0.9
-    return (flux/flux.max())[:-1], slope[:-1], (velocity/velocity.max())[:-1]
+    return (flux/flux.max())[:-1], slope[:-1], (velocity/velocity.max())[:-1]#, water[:-1]
 
 def smooth_coast_lines(mesh):
     """Reduce erosion artifacts by lowering small, sharp islands and filling in
@@ -57,8 +71,8 @@ def smooth_coast_lines(mesh):
     return elevation
 
 def hydrolic_erosion(mesh):
-    for _ in range(15):
-        mesh.elevation = planchon_darboux_fill(mesh)
+    for _ in range(5):
+        mesh.water = planchon_darboux_fill(mesh) - mesh.elevation
         flux, sloke, velocity = calculate_flow(mesh)
         mesh.elevation -= np.minimum(velocity*np.sqrt(flux), 0.05)
     #mesh.elevation = smooth_coast_lines(mesh)

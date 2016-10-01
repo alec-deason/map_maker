@@ -10,9 +10,9 @@ class Cities:
 
 def city_score(mesh, locations, target_count):
     spacing = np.mean([mesh.width,mesh.height])/target_count
-    mask = np.logical_or(np.logical_or(mesh.centers[:,0] < spacing, np.logical_or(np.logical_or(mesh.elevation < mesh.water_line, mesh.centers[:,0] >= mesh.width-spacing), mesh.centers[:,1] >= mesh.height-spacing)), mesh.centers[:,1] < spacing)
+    mask = np.logical_or(np.logical_or(mesh.centers[:,0] < spacing, np.logical_or(np.logical_or(mesh.water > 0, mesh.centers[:,0] >= mesh.width-spacing), mesh.centers[:,1] >= mesh.height-spacing)), mesh.centers[:,1] < spacing)
     water_proximity = np.zeros(mesh.elevation.shape)
-    water_proximity[mesh.elevation < mesh.water_line] = 1
+    water_proximity[mesh.water > 0] = 1
     for _ in range(10):
         water_proximity += water_proximity[mesh.neighbors].mean(axis=1)
     
@@ -45,10 +45,10 @@ def grow_population(mesh, target_total):
         x = np.cos(a)*d+mesh.centers[l][0]
         y = np.sin(a)*d+mesh.centers[l][1]
         i = mesh.point_to_region((x,y))
-        if mesh.elevation[i] > mesh.water_line:
+        if mesh.water[i] ==0:
             mesh.population[i] += 150
             if mesh.population[i] > 1000:
-                ns = [n for n in mesh.neighbors[i] if n >= 0 and mesh.elevation[n] > mesh.water_line]
+                ns = [n for n in mesh.neighbors[i] if n >= 0 and mesh.water[n] == 0]
                 mesh.population[i] = 1000
                 if ns:
                     overflow = mesh.population[i] - 1000

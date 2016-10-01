@@ -12,6 +12,7 @@ class Mesh:
         self.edge_regions = None
         self.neighbors = None
         self.elevation = None
+        self.water = None
         self.water_flux = None
         self.population = None
         self.point_to_region = None
@@ -38,7 +39,9 @@ def delauny_mesh(width, height, point_count):
     mesh.points = dmesh.points
     mesh.regions = dmesh.simplices
     mesh.vertices = dmesh.vertices
-    mesh.edge_regions = dmesh.neighbors.min(axis=1) == -1
+    mesh.edge_regions = np.logical_or(mesh.centers[:,0] > width, 
+                        np.logical_or(mesh.centers[:,1] > height,
+                        dmesh.neighbors.min(axis=1) == -1))
     mesh.neighbors = dmesh.neighbors
     mesh.point_to_region = dmesh.find_simplex
 

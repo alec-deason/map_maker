@@ -5,7 +5,7 @@ from map_maker.cities import place_seeds, grow_population
 from map_maker.visualization import draw
 
 def main():
-    mesh = delauny_mesh(1000, 1000, 12000)
+    mesh = delauny_mesh(3000, 3000, 20000)
     print('Mesh generated')
     mesh.elevation = cones_elevation(mesh)
     print('Initial elevation calculated')
@@ -17,7 +17,7 @@ def main():
     print('Cities seeded')
     mesh = grow_population(mesh, 1000000)
     print('Population distributed')
-    draw('test.png', mesh)
+    draw('test.png', mesh, 500, 500)
 
 if __name__ == '__main__':
     main()
