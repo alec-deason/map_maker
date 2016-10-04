@@ -14,10 +14,10 @@ def humidity(mesh):
     return hum/hum.max()
 
 def assign_biomes(mesh):
-    biome_names = ['ice', 'temperate_forest', 'tropical_forest', 'desert', 'swamp', 'beach']
+    biome_names = ['ice', 'temperate_forest', 'tropical_forest', 'desert', 'swamp', 'beach', 'water']
     biome_map = {n:i for i,n in enumerate(biome_names)}
 
-    ice = mesh.temperature < np.percentile(mesh.temperature[mesh.water == 0], 5)
+    ice = mesh.temperature < np.percentile(mesh.temperature, 5)
     #beach = np.any(mesh.water[mesh.neighbors] > 0, axis=1)
     #beach = np.logical_and(beach, ~ice)
     beach = np.zeros(ice.shape) > 0
@@ -38,6 +38,7 @@ def assign_biomes(mesh):
 
     biomes[np.logical_and(biomes < 0, mesh.temperature > np.percentile(mesh.temperature[mesh.water == 0], 50))] = biome_map['tropical_forest']
     biomes[biomes < 0] = biome_map['temperate_forest']
+    biomes[np.logical_and(~ice, mesh.water > 0)] = biome_map['water']
 
     biome_ids = {v:k for k,v in biome_map.items()}
     return biomes, biome_ids

@@ -22,7 +22,7 @@ class Mesh:
         self.biomes = None
 
 def delauny_mesh(width, height, point_count):
-    points = np.random.randint(int(-width/10), int(width+height/10), size=(point_count,2))
+    points = np.random.randint(int(-width/5), int(width+height/5), size=(point_count,2))
 
     # Relax the mesh
     for i in range(2):
@@ -43,8 +43,8 @@ def delauny_mesh(width, height, point_count):
     mesh.points = dmesh.points
     mesh.regions = dmesh.simplices
     mesh.vertices = dmesh.vertices
-    mesh.edge_regions = np.logical_or(mesh.centers[:,0] > width, 
-                        np.logical_or(mesh.centers[:,1] > height,
+    mesh.edge_regions = np.logical_or(mesh.centers[:,0] > width+width/10, 
+                        np.logical_or(mesh.centers[:,1] > height+height/10,
                         dmesh.neighbors.min(axis=1) == -1))
     mesh.neighbors = dmesh.neighbors
     mesh.point_to_region = dmesh.find_simplex

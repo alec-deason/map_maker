@@ -6,7 +6,7 @@ from map_maker.visualization import draw
 from map_maker import biomes
 
 def main():
-    mesh = delauny_mesh(2000, 2000, 20000)
+    mesh = delauny_mesh(1000, 1000, 20000)
     print('Mesh generated')
     mesh.elevation = cones_elevation(mesh)
     print('Initial elevation calculated')
@@ -19,8 +19,8 @@ def main():
     print('Erosion finished')
     mesh = place_seeds(mesh, 15)
     print('Cities seeded')
-   # mesh = grow_population(mesh, 1000000)
-   # print('Population distributed')
+    #mesh = grow_population(mesh, 100000)
+    #print('Population distributed')
     draw('test.png', mesh, 500, 500)
 
 if __name__ == '__main__':

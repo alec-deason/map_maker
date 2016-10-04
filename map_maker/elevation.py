@@ -20,8 +20,8 @@ def cones_elevation(mesh):
     surface = cairo.ImageSurface (cairo.FORMAT_RGB24, width, height)
     ctx = cairo.Context(surface)
 
-    pat = cairo.LinearGradient(np.random.random()*width, np.random.random()*height, np.random.random()*width, np.random.random()*height)
-    pat.add_color_stop_rgba(0, 0.5, 0.5, 0.5, 1)
+    pat = cairo.LinearGradient(width/2, 0, width/2, height)
+    pat.add_color_stop_rgba(0, 1, 1, 1, 1)
     pat.add_color_stop_rgba(1, 0, 0, 0, 1)
     ctx.set_source (pat)
     ctx.paint()
@@ -44,5 +44,6 @@ def cones_elevation(mesh):
     cx = (cx*scale).astype(int)
     cy = (cy*scale).astype(int)
     elevation = elevation[cx, cy]
-    elevation = elevation / elevation.max() +  simplex_noise_elevation(mesh)
+    elevation = elevation / elevation.max() *  simplex_noise_elevation(mesh)
+    elevation[mesh.edge_regions] = elevation[~mesh.edge_regions].mean()
     return elevation
