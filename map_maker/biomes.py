@@ -1,20 +1,47 @@
 import numpy as np
 
 def temperature(mesh):
+    """Mean annual temperature. Currently assumes a temperate latitude
+    
+    Returns
+    -------
+    float
+    Mean annual temperature in C
+    """
     norm_el = mesh.elevation - np.percentile(mesh.elevation[mesh.water == 0], 2)
     norm_el /= norm_el.max()
+    minimum = 0
+    maximum = 24
     return 1-norm_el
 
-def humidity(mesh):
+def precipitation(mesh):
+    """Silly model that just accounts for proximity to water
+
+    Returns
+    -------
+    float
+    mm of precipitation per year
+    """
     surface_water = mesh.water_flux*50 + (mesh.water > 0).astype(int)*10
     hum = np.zeros(surface_water.shape)
     for _ in range(40):
         hum += surface_water
         hum = hum[mesh.neighbors].mean(axis=1)
-    return hum/hum.max()
+    minimum = 62.5
+    maximum = 16000
+    hum = hum/hum.max()
+    hum *= maximum-62.5
+    hum += 62.5
+    return hum
+
+def life_zones(mesh):
+    """Assign biomes based on https://en.wikipedia.org/wiki/Holdridge_life_zones
+    """
+    pass
+    
 
 def assign_biomes(mesh):
-    biome_names = ['ice', 'temperate_forest', 'tropical_forest', 'desert', 'swamp', 'beach', 'water']
+    biome_names = ['temperate_forest', 'tropical_forest', 'desert', 'swamp', 'beach', 'water', 'ice']
     biome_map = {n:i for i,n in enumerate(biome_names)}
 
     ice = mesh.temperature < np.percentile(mesh.temperature, 5)
@@ -23,10 +50,10 @@ def assign_biomes(mesh):
     beach = np.zeros(ice.shape) > 0
     nib = np.logical_and(~beach, ~ice)
 
-    desert = mesh.humidity < np.percentile(mesh.humidity[mesh.water == 0], 5)
+    desert = mesh.precipitation < np.percentile(mesh.precipitation[mesh.water == 0], 5)
     desert = np.logical_and(nib, desert)
 
-    swamp = mesh.humidity > np.percentile(mesh.humidity[mesh.water == 0], 95)
+    swamp = mesh.precipitation > np.percentile(mesh.precipitation[mesh.water == 0], 95)
     swamp = np.logical_and(nib, swamp)
 
     biomes = np.zeros(mesh.elevation.shape) - 1

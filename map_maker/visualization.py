@@ -22,7 +22,8 @@ def draw(path, mesh, width, height):
     ctx = cairo.Context(surface)
     ctx.scale(width/mesh.width, height/mesh.height)
     ctx.set_line_width(1)
-    water_color = np.clip(np.power(1-mesh.water/mesh.water.max(), 2), 0.2, 1)
+    #water_color = np.clip(np.power(1-mesh.water/mesh.water.max(), 2), 0.2, 1)
+    water_color = 1-mesh.water/mesh.water.max()
     el = mesh.elevation+mesh.water
     light = lit(mesh.centers[mesh.neighbors,:], el[mesh.neighbors])
     light[light > 0.5] = 1
@@ -30,13 +31,15 @@ def draw(path, mesh, width, height):
     deep_water_thresh = np.median(mesh.water) 
     # Draw elevation and lakes/seas
 
+    elevation = mesh.elevation
+    elevation -= elevation[~mesh.edge_regions].min()
+    elevation /= elevation[~mesh.edge_regions].max()
     for i,(verts) in enumerate(mesh.regions):
-        e = mesh.elevation[i]
-        e += mesh.water[i]
-        color = (e,e,e)
+        e = elevation[i]
+        #e += mesh.water[i]
         biome = mesh.biome_ids[mesh.biomes[i]]
         if biome == 'water':
-            color = (0, 0, water_color[i])
+            color = (0, 0, 0.75)
         elif biome == 'desert':
             color = _color(196, 163, 86)
         elif biome == 'beach':
@@ -50,16 +53,16 @@ def draw(path, mesh, width, height):
         elif biome == 'tropical_forest':
             color = _color(22, 153, 53)
             color = _color(74, 186, 70)
-        #if mesh.water[i] <= deep_water_thresh:
-        #    # fake lighting
-        #    e = light[i]
-        #    color = (color[0]*e, color[1]*e, color[2]*e)
+        if biome != 'water':
+            # fake lighting
+            l = light[i]
+            color = (color[0]*e, color[1]*e, color[2]*e)
         ctx.move_to(*mesh.points[verts[0]])
         for v in verts[1:]:
             ctx.line_to(mesh.points[v][0], mesh.points[v][1])
         ctx.close_path()
         ctx.set_source_rgb(*color)
-        ctx.stroke_preserve()
+        #ctx.stroke_preserve()
         ctx.fill()
 
 
@@ -119,3 +122,45 @@ def draw(path, mesh, width, height):
             i = downhill[i]
             w = mesh.water[i]
     surface.write_to_png(path)
+
+def draw_matplotlib(path, mesh, width, height):
+    from scipy.interpolate import griddata
+    from matplotlib.colors import LightSource, LinearSegmentedColormap, ListedColormap
+    from scipy import ndimage
+    import matplotlib.pyplot as plt
+
+    ls = LightSource(azdeg=240, altdeg=45)
+    
+
+    # Biome color map:
+    colors = {
+        'water': (0, 0, 1),
+        'desert': _color(196, 163, 86),
+        'beach': _color(239, 242, 162),
+        'swamp': _color(72, 96, 43),
+        'ice': _color(188, 242, 244),
+        'temperate_forest': _color(74, 186, 70),
+        'tropical_forest': _color(74, 186, 70),
+    }
+    rids = {v:k for k,v in mesh.biome_ids.items()}
+    colors = sorted([(rids[n], c) for n,c in colors.items()], key=lambda x:x[0])
+    colors = list([c[1] for c in colors])
+    cm = ListedColormap(colors,'biomes')
+
+    x_stride = mesh.width/width
+    y_stride = mesh.height/height
+    grid_x, grid_y = np.mgrid[0:mesh.width:x_stride, 0:mesh.height:y_stride]
+    grid_z = griddata(mesh.centers, mesh.elevation+mesh.water, (grid_x, grid_y), method='cubic')
+    grid_b = griddata(mesh.centers, mesh.biomes, (grid_x, grid_y), method='nearest')
+
+    rgb = ls.shade_rgb(cm(grid_b.astype(int)), grid_z, fraction=0.75)
+    rgb = ndimage.rotate(rgb, 90)
+    plt.imshow(rgb, extent=(0,mesh.width, 0, mesh.height))
+    plt.hold(True)
+
+    CS = plt.contour(grid_x, grid_y, grid_z, 3, colors='w')
+    plt.clabel(CS, inline=1, fontsize=10)
+    #plt.imshow(grid_z.T, extent=(0,mesh.width,0,mesh.height), origin='lower')
+    plt.axis('off')
+    plt.savefig(path, bbox_inches='tight', pad_inches=0)
+

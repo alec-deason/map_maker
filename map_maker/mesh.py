@@ -2,6 +2,20 @@ import numpy as np
 
 from scipy.spatial import Voronoi, Delaunay
 
+def _region_areas(mesh):
+    vertices = mesh.vertices[~mesh.edge_regions]
+    non_edge_areas = 0.5*np.abs(
+            (vertices[0][0] - vertices[2][0]) *
+            (vertices[1][1] - vertices[0][1]) -
+            (vertices[0][0] - vertices[1][0]) *
+            (vertices[2][1] - vertices[0][1])
+            )
+    areas = np.zeros(len(mesh.regions))
+    areas[mesh.edge_regions] = 0
+    areas[~mesh.edge_regions] = non_edge_areas
+
+    return areas
+    
 class Mesh:
     def __init__(self):
         self.width = None
@@ -42,10 +56,12 @@ def delauny_mesh(width, height, point_count):
     mesh.centers = dmesh.points[dmesh.vertices].mean(axis=1)
     mesh.points = dmesh.points
     mesh.regions = dmesh.simplices
+
     mesh.vertices = dmesh.vertices
     mesh.edge_regions = np.logical_or(mesh.centers[:,0] > width+width/10, 
                         np.logical_or(mesh.centers[:,1] > height+height/10,
                         dmesh.neighbors.min(axis=1) == -1))
+    mesh.region_areas = _region_areas(mesh)
     mesh.neighbors = dmesh.neighbors
     mesh.point_to_region = dmesh.find_simplex
 
